@@ -1,0 +1,58 @@
+{
+  "_comment": "Preset protection profiles for A-DMZ (192.168.12.101). Rules apply to ANY source; 'track source' makes each limit a per-source quota. Thresholds are lab starting points, not production values.",
+  "presets": [
+    {
+      "id": "monitor",
+      "name": "Monitor",
+      "tagline": "Baseline / observe only",
+      "tolerance": "Observe",
+      "level": 1,
+      "prefix": "ADMZ-MON",
+      "description": "Every rule is notify-only, nothing is dropped and the Penalty Box stays off. Start here: run normal traffic, watch the counters, then pick Basic or Strict.",
+      "rules": [
+        { "name": "ADMZ-MON-pkt-src",     "action": "notify", "source": "any", "service": "any",   "limit": "pkt-rate",      "value": 2000,  "track": "source", "note": "Packets/sec from any single source" },
+        { "name": "ADMZ-MON-http-conn",   "action": "notify", "source": "any", "service": "6/80",  "limit": "new-conn-rate", "value": 25,    "track": "source", "note": "New HTTP connections/sec per source" },
+        { "name": "ADMZ-MON-https-conn",  "action": "notify", "source": "any", "service": "6/443", "limit": "new-conn-rate", "value": 25,    "track": "source", "note": "New HTTPS connections/sec per source" },
+        { "name": "ADMZ-MON-ssh-conn",    "action": "notify", "source": "any", "service": "6/22",  "limit": "new-conn-rate", "value": 3,     "track": "source", "note": "New SSH connections/sec per source" },
+        { "name": "ADMZ-MON-aggregate",   "action": "notify", "source": "any", "service": "any",   "limit": "pkt-rate",      "value": 20000, "track": "none",   "note": "Total packets/sec to A-DMZ from all sources" }
+      ],
+      "pbox": { "enabled": false, "threshold": 500, "timeout": 180, "log_drops": true }
+    },
+    {
+      "id": "basic",
+      "name": "Basic",
+      "tagline": "High tolerance",
+      "tolerance": "High",
+      "level": 2,
+      "prefix": "ADMZ-BAS",
+      "description": "Generous per-source ceilings that only catch obvious floods. Normal and moderately busy clients pass. The aggregate cap stays notify-only, and the Penalty Box needs sustained drops before it boxes a source, then releases it quickly.",
+      "rules": [
+        { "name": "ADMZ-BAS-pkt-src",     "action": "drop",   "source": "any", "service": "any",   "limit": "pkt-rate",         "value": 20000, "track": "source", "note": "Packets/sec from any single source" },
+        { "name": "ADMZ-BAS-http-conn",   "action": "drop",   "source": "any", "service": "6/80",  "limit": "new-conn-rate",    "value": 150,   "track": "source", "note": "New HTTP connections/sec per source" },
+        { "name": "ADMZ-BAS-https-conn",  "action": "drop",   "source": "any", "service": "6/443", "limit": "new-conn-rate",    "value": 150,   "track": "source", "note": "New HTTPS connections/sec per source" },
+        { "name": "ADMZ-BAS-ssh-conn",    "action": "drop",   "source": "any", "service": "6/22",  "limit": "new-conn-rate",    "value": 10,    "track": "source", "note": "New SSH connections/sec per source" },
+        { "name": "ADMZ-BAS-concurrent",  "action": "drop",   "source": "any", "service": "any",   "limit": "concurrent-conns", "value": 1000,  "track": "source", "note": "Open connections per source" },
+        { "name": "ADMZ-BAS-aggregate",   "action": "notify", "source": "any", "service": "any",   "limit": "pkt-rate",         "value": 60000, "track": "none",   "note": "Total packets/sec to A-DMZ, alert only" }
+      ],
+      "pbox": { "enabled": true, "threshold": 1000, "timeout": 60, "log_drops": true }
+    },
+    {
+      "id": "strict",
+      "name": "Strict",
+      "tagline": "Low tolerance",
+      "tolerance": "Low",
+      "level": 3,
+      "prefix": "ADMZ-STR",
+      "description": "Tight per-source quotas sized for a lightly used server. Anything beyond light browsing is dropped. The aggregate cap also drops, and the Penalty Box reacts to a few hundred drops and holds the source for five minutes.",
+      "rules": [
+        { "name": "ADMZ-STR-pkt-src",     "action": "drop",   "source": "any", "service": "any",   "limit": "pkt-rate",         "value": 2000,  "track": "source", "note": "Packets/sec from any single source" },
+        { "name": "ADMZ-STR-http-conn",   "action": "drop",   "source": "any", "service": "6/80",  "limit": "new-conn-rate",    "value": 25,    "track": "source", "note": "New HTTP connections/sec per source" },
+        { "name": "ADMZ-STR-https-conn",  "action": "drop",   "source": "any", "service": "6/443", "limit": "new-conn-rate",    "value": 25,    "track": "source", "note": "New HTTPS connections/sec per source" },
+        { "name": "ADMZ-STR-ssh-conn",    "action": "drop",   "source": "any", "service": "6/22",  "limit": "new-conn-rate",    "value": 3,     "track": "source", "note": "New SSH connections/sec per source" },
+        { "name": "ADMZ-STR-concurrent",  "action": "drop",   "source": "any", "service": "any",   "limit": "concurrent-conns", "value": 100,   "track": "source", "note": "Open connections per source" },
+        { "name": "ADMZ-STR-aggregate",   "action": "drop",   "source": "any", "service": "any",   "limit": "pkt-rate",         "value": 10000, "track": "none",   "note": "Total packets/sec to A-DMZ from all sources" }
+      ],
+      "pbox": { "enabled": true, "threshold": 300, "timeout": 300, "log_drops": true }
+    }
+  ]
+}

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SecureXL DoS Shield</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2l12 4v9c0 7.5-5.2 12.6-12 15-6.8-2.4-12-7.5-12-15V6z' fill='%23ec0e5a'/%3E%3C/svg%3E">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" class="brand-mark" aria-hidden="true">
+        <path d="M16 2l12 4v9c0 7.5-5.2 12.6-12 15-6.8-2.4-12-7.5-12-15V6z" fill="url(#bg)"/>
+        <path d="M10 16.5l4 4 8-9" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff3d7f"/><stop offset="1" stop-color="#b3004a"/></linearGradient></defs>
+      </svg>
+      <div>
+        <div class="brand-title">DoS Shield</div>
+        <div class="brand-sub">SecureXL Rate Limiting</div>
+      </div>
+    </div>
+    <nav id="nav">
+      <a data-tab="overview" class="active"><span class="ico">◉</span>Overview</a>
+      <a data-tab="profiles"><span class="ico">⛨</span>Profiles</a>
+      <a data-tab="rules"><span class="ico">≡</span>Rules</a>
+      <a data-tab="pbox"><span class="ico">▣</span>Penalty Box</a>
+      <a data-tab="deny"><span class="ico">⊘</span>Deny List</a>
+      <a data-tab="monitor"><span class="ico">∿</span>Live Monitor</a>
+      <a data-tab="test"><span class="ico">⚑</span>Test Lab</a>
+      <a data-tab="activity"><span class="ico">⌘</span>Activity</a>
+      <a data-tab="settings"><span class="ico">⚙</span>Settings</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="target-chip">
+        <span class="dot"></span>
+        <div><div class="muted small">Protected asset</div><b>A-DMZ</b> <span class="mono" id="dmzIp">192.168.12.101</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div>
+        <h1 id="pageTitle">Overview</h1>
+        <div class="muted small" id="pageSub">A-GW-Cluster · Alpha site</div>
+      </div>
+      <div class="topbar-right">
+        <span id="modeBadge" class="badge">…</span>
+        <div id="memberPills" class="member-pills"></div>
+        <button class="btn ghost" id="refreshBtn" title="Refresh">⟳ Refresh</button>
+      </div>
+    </header>
+
+    <div id="banner"></div>
+
+    <!-- OVERVIEW -->
+    <section class="tab active" id="tab-overview">
+      <div class="kpis" id="kpis"></div>
+      <div class="card">
+        <div class="card-head"><h3>Traffic path</h3><span class="muted small">A-Host load test → A-DMZ</span></div>
+        <div id="topology"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Cluster consistency</h3><span class="muted small">Lab rules per member</span></div>
+        <div id="syncView"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Quick actions</h3></div>
+        <div class="quick" id="quick"></div>
+      </div>
+    </section>
+
+    <!-- PROFILES -->
+    <section class="tab" id="tab-profiles">
+      <p class="lead">Pick a protection level for A-DMZ. Applying a profile removes the existing lab rules (named <code class="pfx">ADMZ-*</code>) on <b>both</b> cluster members, then installs the new ones. Rules from other sources are not touched.</p>
+      <div class="profiles" id="profiles"></div>
+    </section>
+
+    <!-- RULES -->
+    <section class="tab" id="tab-rules">
+      <div class="card">
+        <div class="card-head"><h3>Add a rule</h3><span class="muted small">Installed on every cluster member</span></div>
+        <form id="ruleForm" class="rule-form"></form>
+      </div>
+      <div id="rulesByMember"></div>
+    </section>
+
+    <!-- PENALTY BOX -->
+    <section class="tab" id="tab-pbox">
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><h3>Penalty Box settings</h3><span class="muted small">Applied to both members</span></div>
+          <p class="muted small">A source whose traffic is dropped faster than the threshold is put in the Penalty Box. SecureXL then drops <b>all</b> its packets early until the timeout expires. These settings are global to the gateway, not specific to A-DMZ.</p>
+          <form id="pboxForm" class="stack"></form>
+        </div>
+        <div class="card">
+          <div class="card-head"><h3>Sources in the box</h3><span class="muted small" id="pboxStamp"></span></div>
+          <div id="pboxList"></div>
+        </div>
+      </div>
+      <div id="pboxRaw"></div>
+    </section>
+
+    <!-- DENY -->
+    <section class="tab" id="tab-deny">
+      <div class="card">
+        <div class="card-head"><h3>Deny list</h3><span class="muted small">Blocks all traffic to and from an address</span></div>
+        <p class="muted small">This is a broader control than rate limiting. It blocks the source everywhere, not only towards A-DMZ, so it can hide the rate-limit behaviour during a test. Entries added here do not survive a reboot. For a permanent entry, use the files in <code>$FWDIR/conf/deny_lists/</code>.</p>
+        <form id="denyForm" class="inline-form">
+          <input name="ip" placeholder="IPv4 address, e.g. 192.168.11.201" class="mono" required>
+          <button class="btn danger">Add to deny list</button>
+        </form>
+        <div id="denyList"></div>
+      </div>
+    </section>
+
+    <!-- MONITOR -->
+    <section class="tab" id="tab-monitor">
+      <div class="monitor-bar">
+        <label class="switch"><input type="checkbox" id="autoMon" checked><span></span> Auto refresh every 3 s</label>
+        <span class="muted small" id="monStamp"></span>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Penalty Box occupancy</h3><span class="muted small">boxed sources, last 5 minutes</span></div>
+        <canvas id="spark" height="90"></canvas>
+      </div>
+      <div id="monitorPanes" class="grid-2"></div>
+    </section>
+
+    <!-- TEST -->
+    <section class="tab" id="tab-test">
+      <div id="testGuide"></div>
+    </section>
+
+    <!-- ACTIVITY -->
+    <section class="tab" id="tab-activity">
+      <div class="card">
+        <div class="card-head"><h3>Commands sent to the gateways</h3><button class="btn ghost sm" id="clearAudit">Clear</button></div>
+        <div class="diag" id="diagButtons"></div>
+        <div id="audit"></div>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="tab" id="tab-settings">
+      <form id="settingsForm"></form>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><h3 id="modalTitle"></h3><button class="x" data-close>×</button></div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-foot" id="modalFoot"></div>
+  </div>
+</div>
+<div id="toasts"></div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
