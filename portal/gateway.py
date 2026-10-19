@@ -62,6 +62,14 @@ ACTIONS = {"drop": "d", "notify": "n"}
 NAME_RE    = re.compile(r"^[A-Za-z0-9_.\-]{1,40}$")
 SERVICE_RE = re.compile(r"^(any|\d{1,3}(/\d{1,5}(-\d{1,5})?)?)$")
 UID_RE     = re.compile(r"^[A-Za-z0-9<>,{}\-_:.]{1,120}$")
+USER_RE    = re.compile(r"^[A-Za-z0-9_.\-]{1,32}$")
+
+# Gaia clish rejects anything it doesn't know with "CLINFR0329 Invalid command".
+CLISH_RE   = re.compile(r"CLINFR\d+")
+
+
+def is_clish(result):
+    return bool(CLISH_RE.search((result.get("out") or "") + (result.get("err") or "")))
 
 
 class ValidationError(ValueError):
@@ -275,7 +283,7 @@ class SshTransport:
                        auth_timeout=self.timeout, look_for_keys=False, allow_agent=False)
         self.client = client
 
-    def run(self, command, timeout=30):
+    def run(self, command, timeout=30, raw=False):
         with self.lock:
             for attempt in (1, 2):
                 try:
@@ -283,7 +291,8 @@ class SshTransport:
                             or not self.client.get_transport().is_active():
                         self._connect()
                     # A login shell picks up $FWDIR and the Check Point PATH.
-                    wrapped = "bash -lc " + shlex.quote(command)
+                    # raw=True sends the line as-is, for clish commands.
+                    wrapped = command if raw else "bash -lc " + shlex.quote(command)
                     _, out, err = self.client.exec_command(wrapped, timeout=timeout)
                     rc = out.channel.recv_exit_status()
                     return rc, out.read().decode(errors="replace"), err.read().decode(errors="replace")
@@ -315,7 +324,9 @@ class SimTransport:
         self.deny = []
         self.started = time.time()
 
-    def run(self, command, timeout=30):
+    def run(self, command, timeout=30, raw=False):
+        if raw:
+            return 0, "", ""
         argv = shlex.split(command)
         text = " ".join(argv)
         if text.startswith("cphaprob state"):
@@ -498,15 +509,17 @@ class Cluster:
     def members(self):
         return [m["name"] for m in self.settings["members"]]
 
-    def run(self, member, command, timeout=30, record=True):
+    def run(self, member, command, timeout=30, record=True, raw=False):
         started = time.time()
         try:
-            rc, out, err = self.transports[member].run(command, timeout=timeout)
+            rc, out, err = self.transports[member].run(command, timeout=timeout, raw=raw)
             result = {"member": member, "cmd": command, "rc": rc, "out": out, "err": err,
                       "ok": rc == 0}
         except Exception as exc:
             result = {"member": member, "cmd": command, "rc": None, "out": "",
                       "err": f"{type(exc).__name__}: {exc}", "ok": False}
+        if result["ok"] and is_clish(result):
+            result["ok"] = False      # clish can exit 0 after rejecting the command
         result["ms"] = int((time.time() - started) * 1000)
         result["ts"] = time.strftime("%H:%M:%S")
         if record:
@@ -531,6 +544,19 @@ class Cluster:
             futures = {m: pool.submit(self.run, m, command, 30, record) for m in self.members}
             return {m: f.result() for m, f in futures.items()}
 
+    def fix_shell(self, member):
+        """Sets the SSH user's login shell to bash through clish, then checks it."""
+        user = self.settings.get("ssh_user", "admin")
+        if not USER_RE.match(user):
+            raise ValidationError("SSH user name contains unexpected characters")
+        results = [self.run(member, f"set user {user} shell /bin/bash", raw=True),
+                   self.run(member, "save config", raw=True)]
+        self.transports[member].close()          # the new shell applies to new sessions
+        check = self.run(member, "echo __bash_ok__")
+        check["ok"] = "__bash_ok__" in check["out"]
+        results.append(check)
+        return results
+
     def snapshot(self):
         """Everything the dashboard needs, from every member, in parallel."""
         keys = ["cluster_state", "rate_get", "pbox_show_config", "pbox_show", "deny_show"]
@@ -543,6 +569,7 @@ class Cluster:
             boxed = [ip for ip in parse_ips(raw["pbox_show"]["out"])]
             return member, {
                 "reachable": any(r["ok"] for r in raw.values()),
+                "clish": any(is_clish(r) for r in raw.values()),
                 "error": next((r["err"] for r in raw.values() if r["err"] and not r["ok"]), ""),
                 "cluster_state": parse_cluster_state(raw["cluster_state"]["out"]),
                 "rules": rules,

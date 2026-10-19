@@ -168,10 +168,14 @@ function renderHeader() {
 function renderBanner() {
   const out = [];
   const down = memberEntries().filter(([, m]) => !m.reachable);
-  for (const [name, m] of down) {
-    let hint = "Check the address and credentials in Settings, and that SSH is allowed from A-GUI.";
-    if (/clish|Invalid command|CLINFR/i.test(m.error)) hint = "The SSH user's login shell looks like clish. In clish run <code>set user admin shell /bin/bash</code> then <code>save config</code>.";
-    out.push(`<div class="banner bad"><b>${esc(name)} unreachable.</b> <span>${esc(m.error)}<br>${hint}</span></div>`);
+  for (const [name, m] of memberEntries().filter(([, m]) => m.clish)) {
+    out.push(`<div class="banner warn"><b>${esc(name)} answers in clish.</b>
+      <span>The SSH user's login shell is clish, so <code>fwaccel</code> commands are rejected. The portal can switch it to bash
+      (<code>set user … shell /bin/bash</code> and <code>save config</code>) and check the result.<br>
+      <button class="btn sm" style="margin-top:8px" data-fixshell="${esc(name)}">Switch ${esc(name)} to bash</button></span></div>`);
+  }
+  for (const [name, m] of down.filter(([, m]) => !m.clish)) {
+    out.push(`<div class="banner bad"><b>${esc(name)} unreachable.</b> <span>${esc(m.error)}<br>Check the address and credentials in Settings, and that SSH is allowed from A-GUI.</span></div>`);
   }
   if (!S.snap.in_sync && !down.length) {
     out.push(`<div class="banner warn"><b>Cluster members differ.</b> <span>Lab rules are not identical on every member. The member that is Active after a failover would enforce a different policy. Re-apply a profile to bring them back in line.</span></div>`);
@@ -181,6 +185,16 @@ function renderBanner() {
   }
   $("#banner").innerHTML = out.join("");
 }
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-fixshell]");
+  if (!b) return;
+  const name = b.dataset.fixshell;
+  modal(`Switch ${name} to bash?`, `<p>Sends these clish commands to <b>${esc(name)}</b>, then reconnects and checks that bash answers:</p>
+    <pre class="raw">set user ${esc(S.settings?.ssh_user || "admin")} shell /bin/bash\nsave config</pre>
+    <p class="muted small">This changes the login shell for that user on the gateway, for SSH and console logins alike. To undo it later in Expert mode: <code>clish -c "set user admin shell /etc/cli.sh" && clish -c "save config"</code>.</p>`,
+    [{ label: "Switch to bash", onClick: () => runAction(`Switch ${name} to bash`, api("POST", `/api/members/${encodeURIComponent(name)}/fix-shell`)) }]);
+});
 
 // ---------------------------------------------------------------------------
 // Overview

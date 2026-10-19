@@ -139,6 +139,8 @@ def set_settings():
                 raise gw.ValidationError(f"Member name '{m.get('name')}' is not valid")
         new["members"] = [{"name": m["name"], "host": gw.check_ip(m["host"])} for m in members]
         new["ssh_user"] = str(body.get("ssh_user", new["ssh_user"])).strip() or "admin"
+        if not gw.USER_RE.match(new["ssh_user"]):
+            raise gw.ValidationError("SSH user: letters, digits, '.', '_' or '-'")
         new["ssh_port"] = gw.check_int(body.get("ssh_port", new["ssh_port"]), "SSH port", 1, 65535)
         new["dmz_ip"] = gw.check_ip(body.get("dmz_ip", new["dmz_ip"]))
         prefix = str(body.get("lab_prefix", new["lab_prefix"])).strip()
@@ -189,6 +191,18 @@ def monitor():
     out["boxed"] = {m: gw.parse_ips(v) for m, v in out["pbox_show"].items()}
     out["time"] = time.strftime("%H:%M:%S")
     return jsonify(out)
+
+
+@app.post("/api/members/<member>/fix-shell")
+def fix_shell(member):
+    if member not in cluster.members:
+        return error("Unknown cluster member")
+    with lock:
+        try:
+            results = cluster.fix_shell(member)
+        except gw.ValidationError as exc:
+            return error(str(exc))
+    return jsonify({"results": {member: results}, "failed": 0 if results[-1]["ok"] else 1})
 
 
 @app.post("/api/diagnostics/<key>")

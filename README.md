@@ -59,6 +59,12 @@ set user admin shell /bin/bash
 save config
 ```
 
+If a member still answers in clish, the portal detects the `CLINFR0329
+Invalid command` reply and shows a **Switch to bash** button. That button
+sends those two clish commands over SSH, reconnects and checks that bash
+answers. To undo it later from Expert mode:
+`clish -c "set user admin shell /etc/cli.sh" && clish -c "save config"`.
+
 ### 3. Pick a profile
 
 Open **Profiles** and apply **Monitor** first. Run normal traffic and watch
