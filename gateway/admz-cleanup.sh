@@ -15,7 +15,10 @@ run() {
     "$@" || echo "  !! failed (exit $?)"
 }
 
-fwaccel dos rate get | grep "name=$PREFIX" | sed -n 's/.*uid=\(<[^>]*>\|[^ ]*\).*/\1/p' |
+fwaccel dos rate get | awk -v p="$PREFIX" '
+  /uid=/ && index($0, "name=" p) { if (match($0, /uid=(<[^>]*>|[^ ]+)/)) print substr($0, RSTART + 4, RLENGTH - 4); next }
+  /^[ \t]*Rule UID[ \t]/ { uid = $NF; next }
+  /^[ \t]*(Rule )?Name[ \t]/ && index($NF, p) == 1 && uid != "" { print uid; uid = "" }' |
 while read -r uid; do run fwaccel dos rate del "$uid"; done
 
 [ "${KEEP_PBOX:-0}" = "1" ] || run fwaccel dos pbox --set-enabled off

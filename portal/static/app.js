@@ -579,6 +579,14 @@ function diffLines(prev, next) {
   return esc(next).split("\n").map((l, i) => (prev && !old.has(next.split("\n")[i]) ? `<span class="chg">${l}</span>` : l)).join("\n");
 }
 
+function setPre(pre, prevText, text) {
+  if (prevText === text && pre.childNodes.length) return;
+  const top = pre.scrollTop, left = pre.scrollLeft;
+  pre.innerHTML = diffLines(prevText, text);
+  pre.scrollTop = top;
+  pre.scrollLeft = left;
+}
+
 async function pollMonitor() {
   clearTimeout(S.monTimer);
   if (!$("#tab-monitor").classList.contains("active")) return;
@@ -589,13 +597,28 @@ async function pollMonitor() {
     if (S.spark.length > 100) S.spark.shift();
     drawSpark();
     $("#monStamp").textContent = `updated ${m.time}`;
-    $("#monitorPanes").innerHTML = Object.keys(m.rate_counters).map((member) => {
-      const c = m.rate_counters[member], p = m.pbox_show[member];
+    // Build each member's pane once, then only swap the text, so a refresh
+    // never resets the reader's scroll position.
+    const panes = $("#monitorPanes");
+    for (const member of Object.keys(m.rate_counters)) {
+      let card = panes.querySelector(`[data-member="${CSS.escape(member)}"]`);
+      if (!card) {
+        card = document.createElement("div");
+        card.className = "card";
+        card.dataset.member = member;
+        card.innerHTML = `<div class="card-head"><h3>${esc(member)}</h3><span class="chip boxed-chip"></span></div>
+          <div class="muted small">fwaccel dos rate counters</div><pre class="raw tall" data-k="c"></pre>
+          <div class="muted small" style="margin-top:10px">fwaccel dos pbox --show</div><pre class="raw" data-k="p"></pre>`;
+        panes.appendChild(card);
+      }
+      const n = m.boxed[member].length;
+      const chip = card.querySelector(".boxed-chip");
+      chip.className = `chip boxed-chip ${n ? "drop" : "on"}`;
+      chip.textContent = `${n} boxed`;
       const prev = S.lastMon[member] || {};
-      return `<div class="card"><div class="card-head"><h3>${esc(member)}</h3><span class="chip ${m.boxed[member].length ? "drop" : "on"}">${m.boxed[member].length} boxed</span></div>
-        <div class="muted small">fwaccel dos rate counters</div><pre class="raw">${diffLines(prev.c, c)}</pre>
-        <div class="muted small" style="margin-top:10px">fwaccel dos pbox --show</div><pre class="raw">${diffLines(prev.p, p)}</pre></div>`;
-    }).join("");
+      setPre(card.querySelector('[data-k="c"]'), prev.c, m.rate_counters[member]);
+      setPre(card.querySelector('[data-k="p"]'), prev.p, m.pbox_show[member]);
+    }
     for (const member of Object.keys(m.rate_counters)) S.lastMon[member] = { c: m.rate_counters[member], p: m.pbox_show[member] };
   } catch (e) {
     $("#monStamp").textContent = `monitor error: ${e.message}`;

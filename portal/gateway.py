@@ -201,14 +201,51 @@ class CommandBuilder:
 KV_RE = re.compile(r"""([A-Za-z][\w\-]*)\s*[=:]\s*("[^"]*"|'[^']*'|<[^>]*>|\{[^}]*\}|[^\s,;]+)""")
 
 
+# Block output, as printed by R82 "fwaccel dos rate get/counters":
+#     Rule UID                          <6ad66463,00000000,0201010a,00002f4a>
+#     New Connection Rate               25
+#     Packet Rate                       unlimited
+BLOCK_KEYS = {
+    "rule uid": "uid", "uid": "uid", "name": "name", "rule name": "name",
+    "action": "action", "source": "source", "destination": "destination",
+    "service": "service", "track": "track", "comment": "comment",
+    "packet rate": "pkt-rate", "new connection rate": "new-conn-rate",
+    "max concurrent connections": "concurrent-conns", "byte rate": "bytes",
+}
+BLOCK_LINE_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 /()\-]*?)\s{2,}(\S.*?)\s*$")
+
+
 def parse_rules(text):
+    text = text or ""
+    if re.search(r"^\s*Rule UID\s", text, re.M):
+        return parse_rule_blocks(text)
     rules = []
-    for line in (text or "").splitlines():
+    for line in text.splitlines():
         if "uid" not in line.lower() and "name" not in line.lower():
             continue
         fields = {k.lower(): v.strip("\"'") for k, v in KV_RE.findall(line)}
         if "uid" in fields or "name" in fields:
             rules.append(fields)
+    return rules
+
+
+def parse_rule_blocks(text):
+    rules, current = [], None
+    for line in text.splitlines():
+        m = BLOCK_LINE_RE.match(line)
+        if not m:
+            continue
+        label, value = m.group(1).strip().lower(), m.group(2).strip()
+        key = BLOCK_KEYS.get(label, label.replace(" ", "-"))
+        if key == "uid":
+            current = {"uid": value}
+            rules.append(current)
+        elif current is not None:
+            if key in ("pkt-rate", "new-conn-rate", "concurrent-conns", "bytes") and not value[:1].isdigit():
+                continue                           # "unlimited"
+            if key == "action":
+                value = {"d": "drop", "n": "notify", "b": "bypass"}.get(value.lower(), value.lower())
+            current[key] = value
     return rules
 
 
