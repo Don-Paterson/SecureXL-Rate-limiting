@@ -235,6 +235,22 @@ crosses the gateway, so use the lab console.
 
 ---
 
+## Command reference
+
+A line-by-line explanation of every command the portal and scripts send covers:
+
+- the Basic rate rules;
+- the Penalty Box settings;
+- monitoring;
+- cleanup.
+
+It is available in three formats:
+
+- [docs/COMMAND-REFERENCE.md](docs/COMMAND-REFERENCE.md), to read on GitHub
+- [docs/COMMAND-REFERENCE.docx](docs/COMMAND-REFERENCE.docx), Word, for handouts
+- [docs/COMMAND-REFERENCE.xlsx](docs/COMMAND-REFERENCE.xlsx), Excel, filterable by category, plus a
+  rule-anatomy sheet and a Monitor / Basic / Strict comparison
+
 ## Persistence and ClusterXL
 
 - **Run everything on both members.** The portal does this for you and
