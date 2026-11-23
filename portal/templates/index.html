@@ -64,7 +64,7 @@
         <div class="card-head"><h3>Traffic path</h3><span class="muted small">A-Host load test → A-DMZ</span></div>
         <div id="topology"></div>
       </div>
-      <div class="card">
+      <div class="cluster-only card">
         <div class="card-head"><h3>Cluster consistency</h3><span class="muted small">Lab rules per member</span></div>
         <div id="syncView"></div>
       </div>
@@ -76,14 +76,14 @@
 
     <!-- PROFILES -->
     <section class="tab" id="tab-profiles">
-      <p class="lead">Pick a protection level for A-DMZ. Applying a profile removes the existing lab rules (named <code class="pfx">ADMZ-*</code>) on <b>both</b> cluster members, then installs the new ones. Rules from other sources are not touched.</p>
+      <p class="lead">Pick a protection level for A-DMZ. Applying a profile removes the existing lab rules (named <code class="pfx">ADMZ-*</code>) on <span class="scope-all">both cluster members</span>, then installs the new ones. Rules from other sources are not touched.</p>
       <div class="profiles" id="profiles"></div>
     </section>
 
     <!-- RULES -->
     <section class="tab" id="tab-rules">
       <div class="card">
-        <div class="card-head"><h3>Add a rule</h3><span class="muted small">Installed on every cluster member</span></div>
+        <div class="card-head"><h3>Add a rule</h3><span class="muted small">Installed on <span class="scope-every">every cluster member</span></span></div>
         <form id="ruleForm" class="rule-form"></form>
       </div>
       <div id="rulesByMember"></div>
@@ -93,7 +93,7 @@
     <section class="tab" id="tab-pbox">
       <div class="grid-2">
         <div class="card">
-          <div class="card-head"><h3>Penalty Box settings</h3><span class="muted small">Applied to both members</span></div>
+          <div class="card-head"><h3>Penalty Box settings</h3><span class="muted small">Applied to <span class="scope-all">both cluster members</span></span></div>
           <p class="muted small">A source whose traffic is dropped faster than the threshold is put in the Penalty Box. SecureXL then drops <b>all</b> its packets early until the timeout expires. These settings are global to the gateway, not specific to A-DMZ.</p>
           <form id="pboxForm" class="stack"></form>
         </div>

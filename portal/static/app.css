@@ -301,3 +301,6 @@ canvas#spark { width: 100%; height: 90px; display: block; }
   .editor-rule { grid-template-columns: 1fr 1fr; }
   main { padding: 16px; }
 }
+
+/* Single-gateway labs (one member): hide cluster-only panels. */
+.single-gw .cluster-only { display: none; }

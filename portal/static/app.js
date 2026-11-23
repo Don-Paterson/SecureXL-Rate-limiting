@@ -149,9 +149,22 @@ function renderAll() {
 }
 
 function memberEntries() { return Object.entries(S.snap?.members || {}); }
+// One gateway (CCSA/CTPS labs: A-GW) or a cluster (CCSE/CCTE labs: A-GW-01 + A-GW-02).
+function isSingle() { return memberEntries().length === 1; }
+function gwLabel() { return isSingle() ? memberEntries()[0][0] : "A-GW-Cluster"; }
+function applyTarget() { return isSingle() ? gwLabel() : "cluster"; }
+function scopeAll() { return isSingle() ? gwLabel() : "both cluster members"; }
+function scopeEvery() { return isSingle() ? gwLabel() : "every cluster member"; }
+function applyScope() {
+  document.body.classList.toggle("single-gw", isSingle());
+  $$(".scope-all").forEach((e) => (e.textContent = scopeAll()));
+  $$(".scope-every").forEach((e) => (e.textContent = scopeEvery()));
+  TITLES.overview[1] = `${gwLabel()} · Alpha site`;
+}
 function profileById(id) { return S.profiles.find((p) => p.id === id); }
 
 function renderHeader() {
+  applyScope();
   const sim = S.snap.simulator;
   const badge = $("#modeBadge");
   badge.className = `badge ${sim ? "sim" : "live"}`;
@@ -160,7 +173,7 @@ function renderHeader() {
   $$(".pfx").forEach((e) => (e.textContent = `${S.snap.prefix}*`));
   $("#memberPills").innerHTML = memberEntries().map(([name, m]) => {
     const st = !m.reachable ? "down" : (m.cluster_state || "").toLowerCase();
-    const label = !m.reachable ? "unreachable" : (m.cluster_state || "reachable");
+    const label = !m.reachable ? "unreachable" : (m.cluster_state || (isSingle() ? "gateway" : "reachable"));
     return `<span class="pill ${st}"><span class="led"></span>${esc(name)} <span class="muted">${esc(label)}</span></span>`;
   }).join("");
 }
@@ -177,7 +190,7 @@ function renderBanner() {
   for (const [name, m] of down.filter(([, m]) => !m.clish)) {
     out.push(`<div class="banner bad"><b>${esc(name)} unreachable.</b> <span>${esc(m.error)}<br>Check the address and credentials in Settings, and that SSH is allowed from A-GUI.</span></div>`);
   }
-  if (!S.snap.in_sync && !down.length) {
+  if (!S.snap.in_sync && !down.length && !isSingle()) {
     out.push(`<div class="banner warn"><b>Cluster members differ.</b> <span>Lab rules are not identical on every member. The member that is Active after a failover would enforce a different policy. Re-apply a profile to bring them back in line.</span></div>`);
   }
   if (S.snap.simulator) {
@@ -219,7 +232,7 @@ function renderOverview() {
     kpi("Rules installed", ruleCounts.join(" / ") || "0", members.map(([n]) => n).join(" / "), "rgba(139,92,246,.25)"),
     kpi("Penalty Box", pboxOn === members.length && pboxOn ? "On" : pboxOn ? "Partial" : "Off",
       boxed.length ? `${boxed.length} source(s) boxed now` : "No sources boxed", boxed.length ? "rgba(240,68,68,.35)" : "rgba(34,197,94,.22)"),
-    kpi("Cluster sync", S.snap.in_sync ? "✓ In sync" : "✗ Drift", S.snap.in_sync ? "Same lab rules on every member" : "Re-apply a profile", S.snap.in_sync ? "rgba(34,197,94,.22)" : "rgba(240,68,68,.35)"),
+    isSingle() ? "" : kpi("Cluster sync", S.snap.in_sync ? "✓ In sync" : "✗ Drift", S.snap.in_sync ? "Same lab rules on every member" : "Re-apply a profile", S.snap.in_sync ? "rgba(34,197,94,.22)" : "rgba(240,68,68,.35)"),
     kpi("Deny list", deny.length, deny.length ? esc(deny.join(", ")) : "No explicit blocks", "rgba(56,189,248,.2)"),
   ].join("");
 
@@ -251,7 +264,7 @@ function topology(active, boxed) {
     ? `<g transform="translate(225 118)"><circle r="16" fill="#f04444" class="pulse"/><path d="M-7 -7l14 14M7 -7l-14 14" stroke="#fff" stroke-width="3" stroke-linecap="round"/></g>
        <text x="225" y="152" text-anchor="middle" fill="#ff8a8a" font-size="11" font-weight="700">PENALTY BOX</text>`
     : "";
-  return `<div class="topo"><svg viewBox="0 0 760 270" role="img" aria-label="A-Host to A-DMZ through the cluster">
+  return `<div class="topo"><svg viewBox="0 0 760 270" role="img" aria-label="A-Host to A-DMZ through ${esc(gwLabel())}">
     <defs>
       <linearGradient id="gw" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff4d8a"/><stop offset="1" stop-color="#b3004a"/></linearGradient>
       <filter id="glow"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
@@ -276,11 +289,11 @@ function topology(active, boxed) {
     <!-- Cluster -->
     <g transform="translate(300 60)">
       <rect width="160" height="116" rx="16" fill="#1b1222" stroke="#ec0e5a" stroke-dasharray="5 4"/>
-      <rect x="18" y="22" width="56" height="44" rx="6" fill="url(#gw)"/>
-      <rect x="86" y="22" width="56" height="44" rx="6" fill="url(#gw)" opacity=".75"/>
-      <path d="M46 34 l9 3.5v6c0 4.6-3.5 7.6-9 9.5-5.5-1.9-9-4.9-9-9.5v-6z" fill="#fff" opacity=".9"/>
-      <path d="M114 34 l9 3.5v6c0 4.6-3.5 7.6-9 9.5-5.5-1.9-9-4.9-9-9.5v-6z" fill="#fff" opacity=".7"/>
-      <text x="80" y="88" text-anchor="middle" fill="#e7eaf3" font-size="13" font-weight="700">A-GW-Cluster</text>
+      <rect x="${isSingle() ? 52 : 18}" y="22" width="56" height="44" rx="6" fill="url(#gw)"/>
+      ${isSingle() ? "" : `<rect x="86" y="22" width="56" height="44" rx="6" fill="url(#gw)" opacity=".75"/>`}
+      <path d="M${isSingle() ? 80 : 46} 34 l9 3.5v6c0 4.6-3.5 7.6-9 9.5-5.5-1.9-9-4.9-9-9.5v-6z" fill="#fff" opacity=".9"/>
+      ${isSingle() ? "" : `<path d="M114 34 l9 3.5v6c0 4.6-3.5 7.6-9 9.5-5.5-1.9-9-4.9-9-9.5v-6z" fill="#fff" opacity=".7"/>`}
+      <text x="80" y="88" text-anchor="middle" fill="#e7eaf3" font-size="13" font-weight="700">${esc(gwLabel())}</text>
       <text x="80" y="104" text-anchor="middle" fill="#ff8ab4" font-size="11">SecureXL rate limiting</text>
     </g>
     <!-- A-DMZ -->
@@ -300,7 +313,7 @@ function topology(active, boxed) {
     </g>
     <text x="380" y="230" text-anchor="middle" fill="#8a93a9" font-size="12">${
       hostBoxed ? "A-Host is in the Penalty Box: SecureXL drops its packets early until the timeout expires."
-        : active ? `${esc(active.rules.length)} per-source limits enforced on both members · Penalty Box ${active.pbox.enabled ? "armed" : "off"}`
+        : active ? `${esc(active.rules.length)} per-source limits enforced on ${esc(scopeAll())} · Penalty Box ${active.pbox.enabled ? "armed" : "off"}`
           : "No lab profile applied: traffic reaches A-DMZ without rate limits."}</text>
   </svg></div>`;
 }
@@ -340,10 +353,10 @@ function renderProfiles() {
         ${p.pbox.enabled ? `<span class="chip">box after ${p.pbox.threshold} drops/s</span><span class="chip">hold ${p.pbox.timeout}s</span>` : ""}
       </div>
       <div class="p-actions">
-        <button class="btn" data-apply="${p.id}">Apply to cluster</button>
+        <button class="btn" data-apply="${p.id}">Apply to ${esc(applyTarget())}</button>
         <button class="btn ghost" data-preview="${p.id}">Preview</button>
         <button class="btn ghost" data-edit="${p.id}">${p.kind === "custom" ? "Edit" : "Clone & edit"}</button>
-        <a class="btn ghost" href="/api/profiles/${p.id}/export.sh" title="Bash script to run on a member in Expert mode">⤓ .sh</a>
+        <a class="btn ghost" href="/api/profiles/${p.id}/export.sh" title="Bash script to run on ${isSingle() ? "the gateway" : "a member"} in Expert mode">⤓ .sh</a>
         ${p.kind === "custom" ? `<button class="btn link" data-delprof="${p.id}">Delete</button>` : ""}
       </div>
     </div>`;
@@ -358,7 +371,7 @@ document.addEventListener("click", async (e) => {
     const p = profileById(pv.dataset.preview);
     try {
       const { plan } = await api("POST", `/api/profiles/${p.id}/preview`, { replace: true });
-      modal(`Preview · ${p.name}`, `<p class="muted small">These commands would run on each member, in this order. <span class="del">Red lines</span> remove existing lab rules.</p>${renderPlan(plan)}`,
+      modal(`Preview · ${p.name}`, `<p class="muted small">These commands would run on ${isSingle() ? esc(gwLabel()) : "each member"}, in this order. <span class="del">Red lines</span> remove existing lab rules.</p>${renderPlan(plan)}`,
         [{ label: "Apply now", onClick: () => { closeModal(); return applyProfile(p.id); } }]);
     } catch (err) { toast(esc(err.message), "bad"); }
   }
@@ -376,7 +389,7 @@ async function applyProfile(id) {
   if (!p) return;
   const drops = p.rules.filter((r) => r.action === "drop").length;
   const warn = drops ? `${drops} rule(s) will <b>drop</b> traffic${p.pbox.enabled ? " and the Penalty Box will be <b>enabled</b>" : ""}.` : "All rules are notify-only.";
-  modal(`Apply ${p.name}?`, `<p>This replaces the lab rules (<code>${esc(S.snap.prefix)}*</code>) on every cluster member with the <b>${esc(p.name)}</b> profile. ${warn}</p>
+  modal(`Apply ${p.name}?`, `<p>This replaces the lab rules (<code>${esc(S.snap.prefix)}*</code>) on ${esc(scopeEvery())} with the <b>${esc(p.name)}</b> profile. ${warn}</p>
     <p class="muted small">Rules not named with the lab prefix are left alone. Penalty Box settings are global to each gateway.</p>`,
     [{ label: `Apply ${p.name}`, onClick: async () => { await runAction(`Apply ${p.name}`, api("POST", `/api/profiles/${id}/apply`, { replace: true })); } }]);
 }
@@ -470,7 +483,7 @@ function renderRuleForm() {
     <label class="f">Limit<select name="limit"><option value="pkt-rate">pkt-rate (pkt/s)</option><option value="new-conn-rate">new-conn-rate (conn/s)</option><option value="concurrent-conns">concurrent-conns</option><option value="bytes">bytes (B/s)</option></select></label>
     <label class="f">Value<input name="value" type="number" min="1" value="100"></label>
     <label class="f">Track<select name="track"><option>source</option><option>source-service</option><option>none</option></select></label>
-    <button class="btn">Add to cluster</button>`;
+    <button class="btn">Add to ${esc(applyTarget())}</button>`;
   f.onsubmit = (e) => {
     e.preventDefault();
     const o = Object.fromEntries(new FormData(f));
@@ -527,7 +540,7 @@ function renderPbox() {
         <label class="f">Timeout (seconds)<input name="timeout" type="number" min="1"></label>
       </div>
       <label class="switch"><input type="checkbox" name="log_drops"><span></span> Log Penalty Box drops</label>
-      <div class="row" style="flex:none"><button class="btn">Apply to cluster</button></div>`;
+      <div class="row" style="flex:none"><button class="btn">Apply to ${esc(applyTarget())}</button></div>`;
     f.onsubmit = (e) => {
       e.preventDefault();
       runAction("Penalty Box", api("POST", "/api/pbox", {
@@ -696,13 +709,13 @@ function renderTestGuide() {
       <p class="muted small">Apply <b>Basic</b> and run Light: it passes. Run Heavy: the HTTP and packet limits drop, and A-Host lands in the Penalty Box. Apply <b>Strict</b> and run Light again: it is caught straight away.</p>
       <button class="btn ghost sm" data-apply="basic">Apply Basic</button> <button class="btn ghost sm" data-apply="strict">Apply Strict</button></div>
 
-    <div class="step"><h4>Watch it on the gateway <span class="where gui">Expert mode, active member</span></h4>
+    <div class="step"><h4>Watch it on the gateway <span class="where gui">Expert mode, ${isSingle() ? esc(gwLabel()) : "active member"}</span></h4>
       ${code(`watch -n2 'fwaccel dos rate counters; fwaccel dos pbox --show'\nfwaccel dos stats get\ncpview   # Advanced > SecureXL`)}
       <p class="muted small">If A-Host is boxed, all of its traffic through the gateway is dropped until the timeout ends. That includes your RDP session to A-Host if it crosses the gateway, so use the lab console.</p></div>
 
-    <div class="step"><h4>Test failover <span class="where gui">Expert mode</span></h4>
+    ${isSingle() ? "" : `<div class="step"><h4>Test failover <span class="where gui">Expert mode</span></h4>
       ${code(`clusterXL_admin down   # on the active member\ncphaprob state\nclusterXL_admin up`)}
-      <p class="muted small">Re-run the load. Overview → Cluster consistency should show identical lab rules, so protection carries over.</p></div>
+      <p class="muted small">Re-run the load. Overview → Cluster consistency should show identical lab rules, so protection carries over.</p></div>`}
 
     <div class="step"><h4>Clean up <span class="where host">A-Host</span> <span class="where gui">A-GUI</span></h4>
       ${code(`C:\\LabTraffic.ps1 -Action Stop`)}
@@ -711,7 +724,7 @@ function renderTestGuide() {
 
   <div class="card"><div class="card-head"><h3>If nothing triggers</h3></div>
     <ul class="small" style="margin:0;padding-left:18px;line-height:1.9">
-      <li>Counters stay at zero: check that traffic is on the member you are watching (<code>cphaprob state</code>) and is accelerated (<code>fwaccel stats -s</code>).</li>
+      <li>Counters stay at zero: ${isSingle() ? "check" : "check that traffic is on the member you are watching (<code>cphaprob state</code>) and"} that it is accelerated (<code>fwaccel stats -s</code>).</li>
       <li>Rate limiting or the Penalty Box can be limited to external interfaces. A-Host is behind eth2 (internal). Check <code>fwaccel dos config get</code> for the internal-interfaces setting.</li>
       <li>A command was rejected: open Settings → Command syntax and adjust the template to match <code>fwaccel dos rate -h</code> on your build.</li>
       <li>The client stops at "Cannot reach ${dmz} on TCP 5201": the receiver isn't running on A-DMZ, or the access rule is missing.</li>

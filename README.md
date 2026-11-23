@@ -1,13 +1,21 @@
 # SecureXL-Rate-limiting
 
-SecureXL DoS rate limiting for the CCSA R82 Alpha lab. The goal is to protect
-**A-DMZ (192.168.12.101)** from floods and connection storms from any source,
-on both members of **A-GW-Cluster**. It has four parts:
+SecureXL DoS rate limiting for the Check Point Alpha lab. The goal is to protect
+**A-DMZ (192.168.12.101)** from floods and connection storms from any source.
+It works in both kinds of course lab:
+
+| Lab | Gateways | Version |
+|---|---|---|
+| Cluster labs (e.g. CCSE, CCTE) | **A-GW-Cluster**: A-GW-01 (10.1.1.2) and A-GW-02 (10.1.1.3) | R82 |
+| Single-gateway labs (e.g. CCSA, CTPS) | **A-GW** (10.1.1.1) | R81.20 |
+
+The deployer detects which lab it is in, and the portal detects the gateway
+version and uses the matching `fwaccel dos` syntax. It has four parts:
 
 - **Three preset profiles:** Monitor, Basic (high tolerance) and Strict (low
   tolerance). You can also build your own custom profiles.
 - **DoS Shield portal:** a Python web portal on A-GUI. It shows the live
-  configuration of both cluster members and lets you apply, change or add
+  configuration of the gateway (or both cluster members) and lets you apply, change or add
   rules, Penalty Box settings and deny entries.
 - **One-line deployment** onto A-GUI with `irm | iex`.
 - **A test plan** that uses [Lab-Traffic-Gen](https://github.com/Don-Paterson/Lab-Traffic-Gen)
@@ -34,7 +42,9 @@ The script:
 2. Installs Python 3.12 for the current user if no Python is found.
 3. Builds a virtual environment with Flask and Paramiko.
 4. Asks once for the gateway SSH user and password.
-5. Checks SSH to 10.1.1.2 and 10.1.1.3.
+5. Detects the gateways: A-GW-01 and A-GW-02 (10.1.1.2 / .3) in a cluster
+   lab, otherwise A-GW (10.1.1.1). It checks SSH to each one. Settings kept
+   from an earlier run are switched to the gateways of the current lab.
 6. Adds a **SecureXL DoS Shield** desktop shortcut and opens
    `http://127.0.0.1:8088`.
 
@@ -48,11 +58,13 @@ Optional, set before the `irm` line:
 | `$env:SXL_BRANCH` | `main` | Branch to deploy |
 | `$env:SXL_PORT` | `8088` | Portal port |
 | `$env:SXL_SIMULATOR` | — | `1` = start with simulated gateways, to explore without a lab |
+| `$env:SXL_GATEWAYS` | detected | Gateways to manage, `name=ip[,name=ip]`, e.g. `A-GW=10.1.1.1` |
+| `$env:SXL_SOURCE` | — | Deploy from a local copy of the repo instead of downloading it |
 
 ### 2. Gateway prerequisite
 
 The portal runs `fwaccel dos …` over SSH, so the SSH user's login shell must
-be bash. On each member, in clish:
+be bash. On the gateway (or each cluster member), in clish:
 
 ```
 set user admin shell /bin/bash
@@ -78,7 +90,8 @@ Every rule matches destination `192.168.12.101/32` from **any source**.
 `track source` turns each limit into a per-source quota, so every client gets
 its own budget. That covers an internal client such as A-Host as well as
 external sources. Lab rules are named `ADMZ-…`. Applying a profile removes
-only rules with that prefix, on both members, before installing the new set.
+only rules with that prefix, on the gateway (or both cluster members), before
+installing the new set.
 
 | Rule | Monitor | Basic · high tolerance | Strict · low tolerance |
 |---|---|---|---|
@@ -115,8 +128,8 @@ Penalty Box settings. Custom profiles are saved in
 
 ### Without the portal
 
-`gateway/` has the same profiles as standalone scripts for Expert mode. Run
-them on **each** member:
+`gateway/` has the same profiles as standalone scripts for Expert mode. They
+work on R81.20 and R82. Run them on A-GW, or on **each** cluster member:
 
 ```bash
 bash admz-status.sh                # read-only baseline, keep the output
@@ -135,15 +148,15 @@ same kind of script. From the repo:
 
 | Tab | What it does |
 |---|---|
-| **Overview** | Active profile, rule counts, Penalty Box and deny-list state, live traffic-path diagram, and a per-member comparison that flags drift between A-GW-01 and A-GW-02 |
-| **Profiles** | Preview the exact commands, apply to the cluster, clone and edit, export as a script |
-| **Rules** | Parsed `fwaccel dos rate get` per member with raw output. Add a single rule to both members. Delete by UID on one member, or by name across the cluster |
-| **Penalty Box** | Enable, drops threshold, timeout and log drops, applied to both members. Shows the sources currently boxed |
+| **Overview** | Active profile, rule counts, Penalty Box and deny-list state, live traffic-path diagram, and, in a cluster lab, a per-member comparison that flags drift between A-GW-01 and A-GW-02 |
+| **Profiles** | Preview the exact commands, apply to the gateway or cluster, clone and edit, export as a script |
+| **Rules** | Parsed `fwaccel dos rate get` per member with raw output. Add a single rule to every gateway. Delete by UID on one gateway, or by name on all of them |
+| **Penalty Box** | Enable, drops threshold, timeout and log drops, applied to every gateway. Shows the sources currently boxed |
 | **Deny List** | Add or remove explicit blocks (lost on reboot) |
 | **Live Monitor** | Rate counters and Penalty Box contents for each member every 3 s, with changed lines highlighted and a chart of how many sources are boxed |
 | **Test Lab** | The A-Host test procedure below, with copy buttons and an expected-outcome table |
 | **Activity** | Every command sent, with exit code and output, plus one-click read-only diagnostics (`cphaprob state`, `fwaccel stats -s`, `fwaccel dos config get` …) |
-| **Settings** | Member IPs, SSH credentials, protected IP, lab prefix, simulator mode and the **command templates** |
+| **Settings** | Gateway IPs, SSH credentials, protected IP, lab prefix, simulator mode and the **command templates** (R81.20 or R82 defaults, picked from the gateway's `fw ver`) |
 
 ![Live monitor](docs/monitor.png)
 
@@ -201,7 +214,7 @@ So the test uses it unchanged, with A-DMZ as the receiver.
    C:\LabTraffic.ps1 -Role Client -Action Start -Load Heavy -Target 192.168.12.101 -Duration 300
    ```
 5. **Portal:** apply **Basic**, then **Strict**, repeating step 4 each time.
-6. **Failover:** `clusterXL_admin down` on the active member, re-run the load,
+6. **Failover (cluster labs only):** `clusterXL_admin down` on the active member, re-run the load,
    check the Overview sync panel, then `clusterXL_admin up`.
 7. **Clean up:** `C:\LabTraffic.ps1 -Action Stop` on A-Host, then **Remove lab
    rules** and switch the Penalty Box off in the portal.
@@ -253,8 +266,13 @@ It is available in three formats:
 
 ## Persistence and ClusterXL
 
-- **Run everything on both members.** The portal does this for you and
-  flags drift. The standalone scripts must be run on each member.
+- **In a cluster lab, run everything on both members.** The portal does this
+  for you and flags drift. The standalone scripts must be run on each member.
+- **R81.20 vs R82:** R81.20 sets the Penalty Box with `fwaccel dos config set
+  --enable-pbox / --pbox-rate / --pbox-tmo`, lists boxed sources with
+  `fwaccel tab -t dos_pbox -f` and uses `fwaccel dos deny -a / -d / -s`.
+  R82 uses `fwaccel dos pbox --set-…` and `fwaccel dos deny --add / --delete / --show`.
+  The portal and the scripts pick the right form automatically.
 - **Rate-limit rules** generally survive a reboot.
 - **Penalty Box settings and CLI deny entries may not survive a reboot.**
   Re-apply the profile after a reboot and verify with

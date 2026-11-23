@@ -20,6 +20,12 @@
         $env:SXL_BRANCH    git branch to deploy    (default main)
         $env:SXL_PORT      portal port             (default 8088)
         $env:SXL_SIMULATOR 1 = start in simulator mode, no gateways needed
+        $env:SXL_SOURCE    deploy from this local copy of the repository
+                           instead of downloading it from GitHub
+        $env:SXL_GATEWAYS  gateways to manage, name=ip[,name=ip]
+                           (default: detected - A-GW-01 + A-GW-02 in cluster labs
+                           such as CCSE/CCTE, A-GW at 10.1.1.1 in single-gateway
+                           labs such as CCSA/CTPS)
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -30,13 +36,21 @@ $Repo       = 'Don-Paterson/SecureXL-Rate-limiting'
 $Branch     = if ($env:SXL_BRANCH) { $env:SXL_BRANCH } else { 'main' }
 $InstallDir = if ($env:SXL_PATH)   { $env:SXL_PATH }   else { 'C:\SecureXL-RL' }
 $Port       = if ($env:SXL_PORT)   { $env:SXL_PORT }   else { '8088' }
-$Members    = @(@{ name = 'A-GW-01'; host = '10.1.1.2' }, @{ name = 'A-GW-02'; host = '10.1.1.3' })
+# Gateways are detected per lab (see "Gateways" below). Override with, for example:
+#   $env:SXL_GATEWAYS = 'A-GW=10.1.1.1'      or      'A-GW-01=10.1.1.2,A-GW-02=10.1.1.3'
 $PyVersion  = '3.12.8'
 $PyUrl      = "https://www.python.org/ftp/python/$PyVersion/python-$PyVersion-amd64.exe"
 
 function Write-Step { param([string]$m) Write-Host "  > $m" -ForegroundColor Cyan }
 function Write-Ok   { param([string]$m) Write-Host "  + $m" -ForegroundColor Green }
 function Write-Warn { param([string]$m) Write-Host "  ! $m" -ForegroundColor Yellow }
+
+# The portal reads settings.json with Python, which rejects the byte-order mark
+# that Windows PowerShell's -Encoding UTF8 adds.
+function Write-Utf8NoBom {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(ValueFromPipeline)][string]$Text)
+    process { [IO.File]::WriteAllText($Path, $Text, (New-Object Text.UTF8Encoding $false)) }
+}
 
 Write-Host ''
 Write-Host '  ==============================================' -ForegroundColor Magenta
@@ -48,19 +62,26 @@ Write-Host ''
 # 1. Code
 # ---------------------------------------------------------------------------
 
-Write-Step "Downloading $Repo ($Branch)"
-$zip     = Join-Path $env:TEMP "sxl_$([guid]::NewGuid().ToString('N')).zip"
-$extract = Join-Path $env:TEMP "sxl_$([guid]::NewGuid().ToString('N'))"
-Invoke-WebRequest -Uri "https://github.com/$Repo/archive/refs/heads/$Branch.zip" -OutFile $zip -UseBasicParsing
-Expand-Archive -Path $zip -DestinationPath $extract -Force
-$src = Get-ChildItem $extract -Directory | Select-Object -First 1
+if ($env:SXL_SOURCE) {
+    Write-Step "Using local copy $env:SXL_SOURCE"
+    $src = Get-Item $env:SXL_SOURCE
+    $zip = $extract = $null
+}
+else {
+    Write-Step "Downloading $Repo ($Branch)"
+    $zip     = Join-Path $env:TEMP "sxl_$([guid]::NewGuid().ToString('N')).zip"
+    $extract = Join-Path $env:TEMP "sxl_$([guid]::NewGuid().ToString('N'))"
+    Invoke-WebRequest -Uri "https://github.com/$Repo/archive/refs/heads/$Branch.zip" -OutFile $zip -UseBasicParsing
+    Expand-Archive -Path $zip -DestinationPath $extract -Force
+    $src = Get-ChildItem $extract -Directory | Select-Object -First 1
+}
 
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 # Copy everything except data\, so settings and custom profiles survive updates.
 Get-ChildItem $src.FullName -Force | Where-Object { $_.Name -ne 'data' } | ForEach-Object {
     Copy-Item $_.FullName -Destination $InstallDir -Recurse -Force
 }
-Remove-Item $zip, $extract -Recurse -Force -ErrorAction SilentlyContinue
+if ($zip) { Remove-Item $zip, $extract -Recurse -Force -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Path (Join-Path $InstallDir 'data') -Force | Out-Null
 Write-Ok "Code in $InstallDir"
 
@@ -120,6 +141,32 @@ if ($LASTEXITCODE -ne 0) { throw 'pip install failed - check internet access fro
 Write-Ok 'Dependencies ready'
 
 # ---------------------------------------------------------------------------
+# Gateways: cluster labs have A-GW-01/02 at 10.1.1.2/.3, single-gateway labs
+# have A-GW at 10.1.1.1. In a cluster lab 10.1.1.1 is the cluster VIP, so the
+# members are checked first.
+# ---------------------------------------------------------------------------
+
+function Test-Ssh([string]$ip) {
+    $c = New-Object Net.Sockets.TcpClient
+    try { return $c.ConnectAsync($ip, 22).Wait(2000) -and $c.Connected } catch { return $false } finally { $c.Close() }
+}
+
+if ($env:SXL_GATEWAYS) {
+    $Members = @($env:SXL_GATEWAYS -split ',' | Where-Object { $_ -match '=' } | ForEach-Object {
+        $n, $ip = $_.Split('=', 2); @{ name = $n.Trim(); host = $ip.Trim() } })
+    $LabType = 'as set in SXL_GATEWAYS'
+}
+elseif ((Test-Ssh '10.1.1.2') -or (Test-Ssh '10.1.1.3')) {
+    $Members = @(@{ name = 'A-GW-01'; host = '10.1.1.2' }, @{ name = 'A-GW-02'; host = '10.1.1.3' })
+    $LabType = 'cluster lab (A-GW-Cluster)'
+}
+else {
+    $Members = @(@{ name = 'A-GW'; host = '10.1.1.1' })
+    $LabType = 'single-gateway lab (A-GW)'
+}
+Write-Ok "Gateways: $(($Members | ForEach-Object { "$($_.name) $($_.host)" }) -join ', ')  -  $LabType"
+
+# ---------------------------------------------------------------------------
 # 4. Settings (first run only)
 # ---------------------------------------------------------------------------
 
@@ -128,7 +175,7 @@ $simulator    = $env:SXL_SIMULATOR -eq '1'
 
 if (-not (Test-Path $settingsFile)) {
     Write-Host ''
-    Write-Host '  Gateway SSH access (Expert / bash shell user on A-GW-01 and A-GW-02)' -ForegroundColor White
+    Write-Host "  Gateway SSH access (Expert / bash shell user on $(($Members | ForEach-Object { $_.name }) -join ' and '))" -ForegroundColor White
     $user = Read-Host '  SSH user [admin]'
     if (-not $user) { $user = 'admin' }
     $secure = Read-Host '  SSH password (blank = set it later in the portal)' -AsSecureString
@@ -144,12 +191,22 @@ if (-not (Test-Path $settingsFile)) {
         lab_prefix   = 'ADMZ-'
         simulator    = $simulator
         commands     = @{}
-    } | ConvertTo-Json -Depth 4 | Set-Content -Path $settingsFile -Encoding UTF8
+    } | ConvertTo-Json -Depth 4 | Write-Utf8NoBom $settingsFile
     $plain = $null
     Write-Ok 'Settings saved (data\settings.json - lab use only, password is stored in plain text)'
 }
 else {
-    Write-Ok 'Keeping existing settings'
+    # Keep credentials and profiles, but follow the lab: a copy carried over
+    # from a cluster lab to a single-gateway lab (or back) gets the right gateways.
+    $saved = [IO.File]::ReadAllText($settingsFile).TrimStart([char]0xFEFF) | ConvertFrom-Json
+    $savedHosts = @($saved.members | ForEach-Object host) -join ','
+    $newHosts   = @($Members | ForEach-Object { $_.host }) -join ','
+    if ($savedHosts -ne $newHosts) {
+        $saved.members = $Members
+        $saved | ConvertTo-Json -Depth 4 | Write-Utf8NoBom $settingsFile
+        Write-Ok "Keeping existing settings; gateways updated for this lab ($newHosts)"
+    }
+    else { Write-Ok 'Keeping existing settings' }
 }
 
 foreach ($m in $Members) {

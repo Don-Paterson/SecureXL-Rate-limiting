@@ -51,6 +51,21 @@ DEFAULT_COMMANDS = {
     "accel_stats":        "fwaccel stats -s",
 }
 
+# Gaia R81.20 keeps the Penalty Box settings under "fwaccel dos config set",
+# lists boxed sources in the dos_pbox table and uses short deny-list flags.
+# Used automatically when a gateway's "fw ver" reports R81.x (CCSA / CTPS labs).
+R81_COMMANDS = {
+    "pbox_show_config":   "fwaccel dos config get",
+    "pbox_show":          "fwaccel tab -t dos_pbox -f",
+    "pbox_set_enabled":   "fwaccel dos config set --{enable}-pbox",
+    "pbox_set_threshold": "fwaccel dos config set --pbox-rate {value}",
+    "pbox_set_timeout":   "fwaccel dos config set --pbox-tmo {value}",
+    "pbox_set_log_drops": "fwaccel dos config set --{enable}-log-pbox",
+    "deny_show":          "fwaccel dos deny -s",
+    "deny_add":           "fwaccel dos deny -a {ip}",
+    "deny_del":           "fwaccel dos deny -d {ip}",
+}
+
 # Read-only commands the Diagnostics panel may run. Nothing else is accepted.
 DIAGNOSTICS = ["cluster_state", "accel_stats", "dos_config", "dos_stats",
                "rate_get", "rate_counters", "pbox_show_config", "pbox_show", "deny_show"]
@@ -145,8 +160,12 @@ def check_rule(rule):
 # ---------------------------------------------------------------------------
 
 class CommandBuilder:
-    def __init__(self, templates):
+    def __init__(self, templates, version=None):
+        self.version = version
         self.t = dict(DEFAULT_COMMANDS)
+        if version and version.startswith("R81"):
+            self.t.update(R81_COMMANDS)
+        # Templates saved in Settings always win.
         self.t.update({k: v for k, v in (templates or {}).items() if k in DEFAULT_COMMANDS and v})
 
     def get(self, key, **values):
@@ -180,10 +199,12 @@ class CommandBuilder:
         if "timeout" in cfg:
             cmds.append(self.get("pbox_set_timeout", value=check_int(cfg["timeout"], "Timeout", 1, 86400)))
         if "log_drops" in cfg:
-            cmds.append(self.get("pbox_set_log_drops", onoff="on" if cfg["log_drops"] else "off"))
+            cmds.append(self.get("pbox_set_log_drops", onoff="on" if cfg["log_drops"] else "off",
+                                 enable="enable" if cfg["log_drops"] else "disable"))
         if "enabled" in cfg:
             # Last, so the thresholds are in place before enforcement starts.
-            cmds.append(self.get("pbox_set_enabled", onoff="on" if cfg["enabled"] else "off"))
+            cmds.append(self.get("pbox_set_enabled", onoff="on" if cfg["enabled"] else "off",
+                                 enable="enable" if cfg["enabled"] else "disable"))
         return cmds
 
     def profile(self, profile, dmz_ip):
@@ -219,6 +240,8 @@ def parse_rules(text):
     text = text or ""
     if re.search(r"^\s*Rule UID\s", text, re.M):
         return parse_rule_blocks(text)
+    if re.search(r"^\s*fwaccel dos rate add\b", text, re.M):
+        return parse_rule_commands(text)
     rules = []
     for line in text.splitlines():
         if "uid" not in line.lower() and "name" not in line.lower():
@@ -226,6 +249,41 @@ def parse_rules(text):
         fields = {k.lower(): v.strip("\"'") for k, v in KV_RE.findall(line)}
         if "uid" in fields or "name" in fields:
             rules.append(fields)
+    return rules
+
+
+# R81.20 "fwaccel dos rate get" prints each rule as the command that re-creates it:
+#   fwaccel dos rate add -i "<6b04...>" -action drop -name "ADMZ-BAS-ssh-conn" -log regular
+#       destination cidr:192.168.12.101/32 service 6/22 new-conn-rate 10 track source
+def parse_rule_commands(text):
+    rules = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("fwaccel dos rate add"):
+            continue
+        try:
+            tok = shlex.split(line)[4:]
+        except ValueError:
+            continue
+        rule, i = {}, 0
+        flags = {"-i": "uid", "-action": "action", "-a": "action", "-name": "name", "-n": "name", "-log": "log"}
+        while i < len(tok):
+            t = tok[i]
+            nxt = tok[i + 1] if i + 1 < len(tok) else ""
+            if t in flags:
+                rule[flags[t]] = nxt
+            elif t in ("source", "destination"):
+                rule[t] = nxt.split(":", 1)[-1]
+            elif t in ("service", "track", "pkt-rate", "new-conn-rate", "concurrent-conns", "bytes"):
+                rule[t] = nxt
+            else:
+                i += 1
+                continue
+            i += 2
+        if rule.get("action"):
+            rule["action"] = {"d": "drop", "n": "notify", "b": "bypass"}.get(rule["action"].lower(), rule["action"].lower())
+        if "uid" in rule or "name" in rule:
+            rules.append(rule)
     return rules
 
 
@@ -286,6 +344,23 @@ def parse_number(text, *words):
             if m:
                 return int(m.group(1))
     return None
+
+
+def parse_r81_pbox(text):
+    """R81.20 "fwaccel dos config get": one 'name: value' line per setting.
+    Returns None for other output, so the R82 parsing is used."""
+    fields = {}
+    for line in (text or "").splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            fields[k.strip().lower()] = v.strip().lower()
+    if "pbox" not in fields or "pbox rate" not in fields:
+        return None
+    num = lambda v: int(re.search(r"\d+", v).group()) if re.search(r"\d+", v) else None
+    return {"enabled": fields["pbox"].startswith("enabled"),
+            "threshold": num(fields["pbox rate"]),
+            "timeout": num(fields.get("pbox tmo", "")),
+            "log_drops": fields.get("log pbox", "").startswith("enabled")}
 
 
 def parse_cluster_state(text):
@@ -528,7 +603,8 @@ class Cluster:
         for t in old.values():
             t.close()
         self.settings = settings
-        self.builder = CommandBuilder(settings.get("commands"))
+        self.version = None                      # detected on first use, see builder
+        self._builder = CommandBuilder(settings.get("commands"))
         self.transports = {}
         for i, m in enumerate(settings["members"]):
             if settings.get("simulator"):
@@ -541,6 +617,24 @@ class Cluster:
                 self.transports[m["name"]] = SshTransport(
                     m["host"], int(settings.get("ssh_port", 22)), settings.get("ssh_user", "admin"),
                     settings.get("ssh_password", ""))
+
+    @property
+    def builder(self):
+        """Command templates for the gateways' version. R81.20 (CCSA/CTPS labs)
+        and R82 (CCSE/CCTE labs) differ in the Penalty Box and deny-list syntax,
+        so the first reachable gateway is asked once with "fw ver"."""
+        if self.version is None and not self.settings.get("simulator"):
+            for name in self.members:
+                try:
+                    rc, out, _ = self.transports[name].run("fw ver", timeout=15)
+                except Exception:
+                    continue
+                m = re.search(r"\b(R\d+(?:\.\d+)?)\b", out or "")
+                if m:
+                    self.version = m.group(1)
+                    self._builder = CommandBuilder(self.settings.get("commands"), self.version)
+                    break
+        return self._builder
 
     @property
     def members(self):
@@ -603,6 +697,7 @@ class Cluster:
             raw = {k: self.run(member, c, record=False) for k, c in cmds.items()}
             rules = parse_rules(raw["rate_get"]["out"])
             pcfg = raw["pbox_show_config"]["out"]
+            r81 = parse_r81_pbox(pcfg)
             boxed = [ip for ip in parse_ips(raw["pbox_show"]["out"])]
             return member, {
                 "reachable": any(r["ok"] for r in raw.values()),
@@ -610,13 +705,12 @@ class Cluster:
                 "error": next((r["err"] for r in raw.values() if r["err"] and not r["ok"]), ""),
                 "cluster_state": parse_cluster_state(raw["cluster_state"]["out"]),
                 "rules": rules,
-                "pbox": {
+                "pbox": dict(r81 or {
                     "enabled": parse_flag(pcfg, "enable", "status", "state"),
                     "threshold": parse_number(pcfg, "threshold", "drop rate"),
                     "timeout": parse_number(pcfg, "timeout"),
                     "log_drops": parse_flag(pcfg, "log"),
-                    "boxed": boxed,
-                },
+                }, boxed=boxed),
                 "deny": parse_ips(raw["deny_show"]["out"]),
                 "raw": {k: (r["out"] or r["err"]) for k, r in raw.items()},
             }
